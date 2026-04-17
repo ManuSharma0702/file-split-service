@@ -8,8 +8,9 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     loop {
         match get_split_task().await {
             Ok(Some(val)) => {
-                dbg!("Data");
-                dbg!(&val);
+                if let Err(e) = process(val).await {
+                    eprintln!("Error while splitting {}", e);
+                }
                 continue;
             },
             Ok(None) => {
@@ -47,6 +48,6 @@ async fn get_split_task() -> Result<Option<Task>, SplitServiceError> {
 
 }
 
-async fn process() -> Result<(), SplitServiceError> {
+async fn process(task: Task) -> Result<(), SplitServiceError> {
     Ok(())
 }
