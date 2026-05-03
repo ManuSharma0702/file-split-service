@@ -7,6 +7,7 @@ pub enum SplitServiceError {
     FetchFailed(String),
     InvalidResponse,
     IOError(String),
+    FileNotFound,
 }
 
 impl Display for SplitServiceError {
@@ -23,6 +24,9 @@ impl Display for SplitServiceError {
             },
             SplitServiceError::IOError(e) => {
                 write!(f, "IO Error {}", e)
+            },
+            SplitServiceError::FileNotFound => {
+                write!(f, "File not found")
             }
         }
     }

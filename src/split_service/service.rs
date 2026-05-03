@@ -1,5 +1,5 @@
-use core::task;
 use std::{error::Error};
+use lopdf::Document;
 
 use reqwest::Client;
 use tokio::{fs::{self, File}, io::AsyncWriteExt};
@@ -57,10 +57,10 @@ async fn get_split_task() -> Result<Option<Task>, SplitServiceError> {
     }
 }
 
-async fn download_file(base_dir: &str, file_url: String, job_id: &str) -> Result<(), SplitServiceError> {
+async fn download_file(base_dir: &str, file_url: String, job_id: &str) -> Result<Option<String>, SplitServiceError> {
     let file_path = format!("{}/{}_basefile", base_dir, job_id);
     let mut res = reqwest::get(file_url).await.map_err(|e| SplitServiceError::FetchFailed(e.to_string()))?;
-    let mut dest = File::create(file_path).await.map_err(|e| SplitServiceError::IOError(e.to_string()))?;
+    let mut dest = File::create(&file_path).await.map_err(|e| SplitServiceError::IOError(e.to_string()))?;
     loop {
         match res.chunk().await {
             Ok(Some(chunk)) => {
@@ -72,12 +72,44 @@ async fn download_file(base_dir: &str, file_url: String, job_id: &str) -> Result
             }
         }
     }
-    Ok(())
+    Ok(Some(file_path))
 }
 
 async fn process(task: Task, base_dir: &str) -> Result<(), SplitServiceError> {
     //After successful processing, empty the files directory, but do not delete it.
-    download_file(base_dir, task.file_url, &task.job_id).await?;
+    let file_path = match download_file(base_dir, task.file_url, &task.job_id).await {
+        Ok(Some(val)) => val,
+        Ok(None) => {
+            return Err(SplitServiceError::InvalidResponse)
+        },
+        Err(e) => {
+            return Err(e)
+        }
+    };
+
+    //Split the files, save to directory then send to file uploader service which uploads to s3
+    let doc = Document::load(&file_path).map_err(|e| SplitServiceError::FileNotFound)?;
+    let pages = doc.get_pages();
+    for (i, _) in pages.iter().enumerate() {
+        let page_number = (i + 1) as u32;
+        
+        // Load the document again for each page extraction
+        let mut doc = Document::load(&file_path).map_err(|_| SplitServiceError::FileNotFound)?;
+        
+        // Retain only the current page (1-indexed)
+        let pages_to_delete: Vec<u32> = pages
+            .keys()
+            .filter(|&&p| p != page_number)
+            .cloned()
+            .collect();
+        doc.delete_pages(&pages_to_delete);
+        
+        // Save the new document
+        let output_name = format!("{}_page_{}.pdf", file_path, page_number);
+        doc.save(output_name).map_err(|_| SplitServiceError::Failed)?;
+        println!("Saved: page_{}.pdf", page_number);
+    }
+
 
     //perform splits, get all splitted files and upload all to s3 at the same time.
 
