@@ -88,7 +88,7 @@ async fn process(task: Task, base_dir: &str) -> Result<(), SplitServiceError> {
     };
 
     //Split the files, save to directory then send to file uploader service which uploads to s3
-    let doc = Document::load(&file_path).map_err(|e| SplitServiceError::FileNotFound)?;
+    let doc = Document::load(&file_path).map_err(|_| SplitServiceError::FileNotFound)?;
     let pages = doc.get_pages();
     for (i, _) in pages.iter().enumerate() {
         let page_number = (i + 1) as u32;
@@ -111,20 +111,15 @@ async fn process(task: Task, base_dir: &str) -> Result<(), SplitServiceError> {
     }
 
 
-    //perform splits, get all splitted files and upload all to s3 at the same time.
-
-    //After successful upload of each file. get count of success counts if the success matches the total pages only then start creating task and pushing to job queue.
-    //else fail the job and send back to job queue with reduced retry count.
-    //If some passed and others failed then what should happen with already uploaded s3 file.
-    //Should get replaced by another worker on retry.
-    //after all file upload success create a task for each file page in db in table ocr_tasks with
-    //job id as reference with status ocr_enqueue_pending.
-    //then create a task for each and send to job queue. on failure update ocr_enqueue_failed. and a bg worker will retry these
-    //failed status. 
-    //Retyr worker will fetch these records by claiming. by getting the rows through update query
+    //perform splits, get all splitted files and upload all to s3 at the same time, by sending to a
+    //upload service which will upload to s3, the upload service will then send to a service which will count the success
+    //and if even one fail then fail the job
+    //and send back to queue with a reduced retry count.
+    //If all success then create job in db with status ocr_enqueue_pending for each then go ahead and upload to job queue. On failure then update status to ocr_enqueue_failed. A bg worker will retry the failed tasks
+    //Retry worker will fetch these records by claiming. by getting the rows through update query
     //so that only a single worker will get and other workers which were also queuing will not
-    //get. Make sure to put a limit on the queue response to make sure a single worker does not
-    //retry everything.
+    //get. Make sure to put a limit on the query response to make sure a single worker does not
+    //retry everything
 
     Ok(())
 }
