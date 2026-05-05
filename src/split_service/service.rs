@@ -1,10 +1,11 @@
 use std::{error::Error};
+use aws_config::load_from_env;
+use aws_sdk_s3::Client;
 use lopdf::Document;
 
-use reqwest::Client;
 use tokio::{fs::{self, File}, io::AsyncWriteExt};
 
-use crate::split_service::value::{SplitServiceError, Task};
+use crate::{s3_upload_service::{self, service::S3UploadService}, split_service::value::{SplitServiceError, Task}};
 
 pub async fn run() -> Result<(), Box<dyn Error>> {
     //On init create a tmp directory for holding files.
@@ -14,6 +15,15 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
 
     let base_dir = format!("{}/files", env!("CARGO_MANIFEST_DIR"));
     fs::create_dir_all(&base_dir).await?;
+
+    //Create a s3 client and pass to s3 upload service
+    let config = load_from_env().await;
+    let client = Client::new(&config);
+
+    let mut s3_service = S3UploadService::new(client);
+    tokio::spawn(async move {
+        s3_service.run().await;
+    });
 
     loop {
         match get_split_task().await {
@@ -37,7 +47,7 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
 
 async fn get_split_task() -> Result<Option<Task>, SplitServiceError> {
 
-    let client  = Client::new();
+    let client  = reqwest::Client::new();
 
     let url = "http://127.0.0.1:8080/task?task_type=split&timeout=10";
 
