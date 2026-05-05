@@ -1,17 +1,20 @@
-use std::{error::Error};
+use std::{env, error::Error};
+use dotenvy::dotenv;
 use aws_config::load_from_env;
 use aws_sdk_s3::Client;
 use lopdf::Document;
+use sqlx::postgres::PgPoolOptions;
+use tokio::{fs::{self, File}, io::AsyncWriteExt, sync::mpsc::Sender};
 
-use tokio::{fs::{self, File}, io::AsyncWriteExt};
-
-use crate::{s3_upload_service::{self, service::S3UploadService}, split_service::value::{SplitServiceError, Task}};
+use crate::{job_creation_service::service::JobCreationService, s3_upload_service::{self, service::{S3UploadError, S3UploadService, S3UploadServicePayload}}, split_service::value::{SplitServiceError, Task}};
 
 pub async fn run() -> Result<(), Box<dyn Error>> {
     //On init create a tmp directory for holding files.
     //Base file downloaded from s3 which will be split into pages and then each page will 
     //be uploaded to s3 in a directory by file_name and for each page a new task will be 
     //pushed to job queue for OCR with task having job_id, file_url (page), page_number, retry_left
+
+    dotenv().ok();
 
     let base_dir = format!("{}/files", env!("CARGO_MANIFEST_DIR"));
     fs::create_dir_all(&base_dir).await?;
@@ -20,7 +23,20 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     let config = load_from_env().await;
     let client = Client::new(&config);
 
-    let mut s3_service = S3UploadService::new(client);
+    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let db = PgPoolOptions::new()
+        .connect(&db_url)
+        .await
+        .expect("Failed to connect to DB");
+
+    let mut job_creation_service = JobCreationService::new(db.clone());
+    let mut s3_service = S3UploadService::new(client, job_creation_service.get_sender());
+
+    let s3_service_tx = s3_service.get_sender();
+
+    tokio::spawn(async move {
+        job_creation_service.run().await;
+    });
     tokio::spawn(async move {
         s3_service.run().await;
     });
@@ -28,13 +44,12 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     loop {
         match get_split_task().await {
             Ok(Some(val)) => {
-                if let Err(e) = process(val, &base_dir).await {
+                if let Err(e) = process(val, &base_dir, s3_service_tx.clone()).await {
                     eprintln!("Error while splitting {}", e);
                 }
                 continue;
             },
             Ok(None) => {
-                dbg!("No data");
                 continue;
             },
             Err(_) => {
@@ -67,7 +82,7 @@ async fn get_split_task() -> Result<Option<Task>, SplitServiceError> {
     }
 }
 
-async fn download_file(base_dir: &str, file_url: String, job_id: &str) -> Result<Option<String>, SplitServiceError> {
+async fn download_file(base_dir: &str, file_url: &str, job_id: &str) -> Result<Option<String>, SplitServiceError> {
     let file_path = format!("{}/{}_basefile", base_dir, job_id);
     let mut res = reqwest::get(file_url).await.map_err(|e| SplitServiceError::FetchFailed(e.to_string()))?;
     let mut dest = File::create(&file_path).await.map_err(|e| SplitServiceError::IOError(e.to_string()))?;
@@ -85,9 +100,9 @@ async fn download_file(base_dir: &str, file_url: String, job_id: &str) -> Result
     Ok(Some(file_path))
 }
 
-async fn process(task: Task, base_dir: &str) -> Result<(), SplitServiceError> {
+async fn process(task: Task, base_dir: &str, s3_service_tx: Sender<S3UploadServicePayload>) -> Result<(), SplitServiceError> {
     //After successful processing, empty the files directory, but do not delete it.
-    let file_path = match download_file(base_dir, task.file_url, &task.job_id).await {
+    let file_path = match download_file(base_dir, &task.file_url, &task.job_id).await {
         Ok(Some(val)) => val,
         Ok(None) => {
             return Err(SplitServiceError::InvalidResponse)
@@ -116,8 +131,16 @@ async fn process(task: Task, base_dir: &str) -> Result<(), SplitServiceError> {
         
         // Save the new document
         let output_name = format!("{}_page_{}.pdf", file_path, page_number);
-        doc.save(output_name).map_err(|_| SplitServiceError::Failed)?;
-        println!("Saved: page_{}.pdf", page_number);
+        doc.save(&output_name).map_err(|_| SplitServiceError::Failed)?;
+        s3_service_tx.send(
+            S3UploadServicePayload {
+                file_path: output_name,
+                job_id: task.job_id.clone(),
+                total_files: pages.len() as u32,
+                retry_count: task.retry_left,
+                file_url: task.file_url.clone()
+            }
+        ).await.map_err(|_| SplitServiceError::Failed)?;
     }
 
 
