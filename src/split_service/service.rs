@@ -117,7 +117,10 @@ async fn process(task: Task, base_dir: &str, s3_service_tx: Sender<S3UploadServi
     };
 
     //Split the files, save to directory then send to file uploader service which uploads to s3
-    let doc = Document::load(&file_path).map_err(|_| SplitServiceError::FileNotFound)?;
+    let doc = Document::load(&file_path).map_err(|e| {
+        eprintln!("{}", e);
+        return SplitServiceError::FileNotFound;
+    })?;
     let pages = doc.get_pages();
     for (i, _) in pages.iter().enumerate() {
         let page_number = (i + 1) as u32;

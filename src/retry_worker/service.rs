@@ -24,8 +24,8 @@ impl RetryWorker {
 
     pub async fn execute(&self) {
         loop {
-            if let Err(_) = self.retry_enqueue_failed_jobs().await {
-                eprintln!("Could not execute retry worker");
+            if let Err(e) = self.retry_enqueue_failed_jobs().await {
+                eprintln!("Could not execute retry worker {}", e);
             }
             sleep(Duration::from_secs(10)).await;
         }
@@ -34,12 +34,17 @@ impl RetryWorker {
     async fn retry_enqueue_failed_jobs(&self) -> Result<(), JobCreationError>{
         let data = get_jobs_by_status(&self.db, "ocr_enqueue_failed".to_string()).await?;
         let mut success_enqueue: Vec<Uuid> = vec![];
+
+        if data.len() == 0 {
+            return Ok(())
+        }    
+
         let client  = Client::new();
         let url = "http://127.0.0.1:8080/push";
         
         for f in data {
             let task = Task {
-                task_type: "split".to_string(),
+                task_type: "ocr".to_string(),
                 job_id: f.id.to_string(),
                 file_url: f.file_url.clone(),
                 retry_left: 5,
@@ -53,7 +58,7 @@ impl RetryWorker {
             }
         }
 
-        update_status_of_jobs(&self.db, success_enqueue, "split_enqueue_pending".to_string()).await?;
+        update_status_of_jobs(&self.db, success_enqueue, "ocr_enqueue_pending".to_string()).await?;
         Ok(())
     }
 

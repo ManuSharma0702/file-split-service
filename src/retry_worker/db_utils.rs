@@ -33,6 +33,7 @@ pub async fn update_status_of_jobs(db_conn: &Pool<Postgres>, job_ids: Vec<Uuid>,
     };
 
     update_multiple_row(db_conn, row_data, job_ids).await?;
+    dbg!("Updated successfully");
     Ok(())
 }
 
@@ -45,8 +46,8 @@ async fn update_multiple_row(
         r#"
         UPDATE ocr_jobs
         SET
-            status = COALESCE($1, status),
-        WHERE id = ANY($6)
+            status = COALESCE($1, status)
+        WHERE id = ANY($2)
         "#
     )
     .bind(row_data.status)
