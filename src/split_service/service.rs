@@ -6,7 +6,7 @@ use lopdf::Document;
 use sqlx::postgres::PgPoolOptions;
 use tokio::{fs::{self, File}, io::AsyncWriteExt, sync::mpsc::Sender};
 
-use crate::{job_creation_service::service::JobCreationService, s3_upload_service::{service::{S3UploadService, S3UploadServicePayload}}, split_service::value::{SplitServiceError, Task}};
+use crate::{job_creation_service::service::JobCreationService, retry_worker::service::RetryWorker, s3_upload_service::service::{S3UploadService, S3UploadServicePayload}, split_service::value::{SplitServiceError, Task}};
 
 pub async fn run() -> Result<(), Box<dyn Error>> {
     //On init create a tmp directory for holding files.
@@ -33,7 +33,11 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     let mut s3_service = S3UploadService::new(client, job_creation_service.get_sender());
 
     let s3_service_tx = s3_service.get_sender();
+    let retry_worker = RetryWorker::new(db.clone());
 
+    tokio::spawn(async move {
+        retry_worker.execute().await;
+    });
     tokio::spawn(async move {
         job_creation_service.run().await;
     });
