@@ -11,7 +11,8 @@ pub struct S3UploadServicePayload {
     pub total_files: u32,
     pub job_id: String,
     pub retry_count: u32,
-    pub file_url: String
+    pub file_url: String,
+    pub page_number: u32
 }
 
 pub struct S3UploadService {
@@ -116,7 +117,8 @@ impl S3UploadService {
                         total_files: value.total_files,
                         s3_url: Some(s3_url),
                         retry_count: value.retry_count,
-                        file_url: value.file_url
+                        file_url: value.file_url,
+                        page_number: value.page_number
                     }
                 ).await.map_err(|e| S3UploadError::Failure(e.to_string())) {
                     eprintln!("Error while sending to Job Creation Service {}", e);
@@ -132,7 +134,8 @@ impl S3UploadService {
                         total_files: value.total_files,
                         s3_url: None,
                         retry_count: value.retry_count,
-                        file_url: value.file_url
+                        file_url: value.file_url,
+                        page_number: value.page_number
                     }
                 ).await.map_err(|e| S3UploadError::Failure(e.to_string())) {
                     eprintln!("Error while sending to Job Creation Service {}", e);

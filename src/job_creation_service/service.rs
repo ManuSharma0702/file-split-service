@@ -1,10 +1,11 @@
-use std::{collections::HashMap, usize};
+use std::{collections::HashMap, str::FromStr, usize, vec};
 
 use reqwest::Client;
 use sqlx::{Pool, Postgres};
 use tokio::sync::mpsc::{self, Receiver, Sender};
+use uuid::Uuid;
 
-use crate::{job_creation_service::db_utils::{job_enqueue_fail, JobCreationError}, split_service::value::Task};
+use crate::{job_creation_service::db_utils::{insert_row, job_enqueue_fail, ocr_job_enqueue_fail, JobCreationError, RowData}, split_service::value::Task};
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub enum Status {
@@ -20,7 +21,8 @@ pub struct JobCreationPayload {
     pub total_files: u32,
     pub s3_url: Option<String>,
     pub retry_count: u32,
-    pub file_url: String
+    pub file_url: String,
+    pub page_number: u32
 }
 
 struct StatusValue {
@@ -63,7 +65,8 @@ impl JobCreationService {
                 job_id: v[0].job_id.clone(),
                 task_type: "split".to_string(),
                 file_url: v[0].file_url.clone(),
-                retry_left: v[0].retry_count - 1 
+                retry_left: v[0].retry_count - 1,
+                page_number: None
             };
             let client  = Client::new();
             let url = "http://127.0.0.1:8080/push";
@@ -77,7 +80,45 @@ impl JobCreationService {
         }
 
         //If all success, then create entry in DB for all success as status ocr_enqueue_pending. then create task for each and push to job queue, if any failure then update status to ocr_enqueue_failed and make a retry worker retry these.
-        
+        let v = job_status.by_status.entry(Status::Success).or_default();
+        let job_id = &v[0].job_id.clone();
+        let mut rows: Vec<RowData> = vec![];
+        for j in v {
+            let uuid = Uuid::from_str(&j.job_id)
+                .map_err(|e| JobCreationError::DBError(e.to_string())).unwrap();
+            rows.push(
+                RowData { status: Some("ocr_enqueue_pending".to_string()), enqueue_left: Some(5), file_url: j.s3_url.take(), job_id: Some(uuid), page_number: Some(j.page_number as i32) }
+            );
+        }
+
+        let row_result = match insert_row(&self.db, rows).await {
+            Ok(val) => val,
+            Err(e) =>  {
+                eprintln!("Error while inserting into DB: {}",e);
+                let _ = job_enqueue_fail(&self.db, job_id).await.map_err(|e| JobCreationError::DBError(e.to_string()));
+                return;
+            }
+        };
+
+        let mut tasks: Vec<Task> = vec![];
+        row_result.into_iter().for_each(
+            |r| tasks.push(
+                Task { task_type: "ocr".to_string(), job_id: r.id.to_string(), file_url: r.file_url, retry_left: 5, page_number: Some(r.page_number) }
+            )
+        );
+
+        let client  = Client::new();
+        let url = "http://127.0.0.1:8080/push";
+        for p in tasks {
+            match client.post(url).json(&p).send().await {
+                Ok(_) => {
+                    dbg!("SENT");
+                },
+                Err(_) => {
+                    let _ = ocr_job_enqueue_fail(&self.db, &p.job_id).await.map_err(|e| JobCreationError::DBError(e.to_string()));
+                }
+            }
+        }
     }
 
     async fn count(&mut self, val: JobCreationPayload) {

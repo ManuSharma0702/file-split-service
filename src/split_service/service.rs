@@ -6,7 +6,7 @@ use lopdf::Document;
 use sqlx::postgres::PgPoolOptions;
 use tokio::{fs::{self, File}, io::AsyncWriteExt, sync::mpsc::Sender};
 
-use crate::{job_creation_service::service::JobCreationService, s3_upload_service::{self, service::{S3UploadError, S3UploadService, S3UploadServicePayload}}, split_service::value::{SplitServiceError, Task}};
+use crate::{job_creation_service::service::JobCreationService, s3_upload_service::{service::{S3UploadService, S3UploadServicePayload}}, split_service::value::{SplitServiceError, Task}};
 
 pub async fn run() -> Result<(), Box<dyn Error>> {
     //On init create a tmp directory for holding files.
@@ -138,7 +138,8 @@ async fn process(task: Task, base_dir: &str, s3_service_tx: Sender<S3UploadServi
                 job_id: task.job_id.clone(),
                 total_files: pages.len() as u32,
                 retry_count: task.retry_left,
-                file_url: task.file_url.clone()
+                file_url: task.file_url.clone(),
+                page_number
             }
         ).await.map_err(|_| SplitServiceError::Failed)?;
     }
