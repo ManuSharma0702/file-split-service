@@ -48,7 +48,7 @@ impl RetryWorker {
                 job_id: f.id.to_string(),
                 file_url: f.file_url.clone(),
                 retry_left: 5,
-                page_number: None
+                page_number: Some(f.page_number)
             };
             match client.post(url).json(&task).send().await {
                 Ok(_) => success_enqueue.push(f.id),
