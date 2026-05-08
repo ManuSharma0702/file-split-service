@@ -32,7 +32,7 @@ impl Display for SplitServiceError {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Task {
     pub task_type: String,
     pub job_id:  String,

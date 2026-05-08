@@ -3,10 +3,10 @@ use dotenvy::dotenv;
 use aws_config::load_from_env;
 use aws_sdk_s3::Client;
 use lopdf::Document;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 use tokio::{fs::{self, File}, io::AsyncWriteExt, sync::mpsc::Sender};
 
-use crate::{job_creation_service::service::JobCreationService, retry_worker::service::RetryWorker, s3_upload_service::service::{S3UploadService, S3UploadServicePayload}, split_service::value::{SplitServiceError, Task}};
+use crate::{job_creation_service::{db_utils::job_enqueue_fail, service::JobCreationService}, retry_worker::service::RetryWorker, s3_upload_service::service::{S3UploadService, S3UploadServicePayload}, split_service::value::{SplitServiceError, Task}};
 
 pub async fn run() -> Result<(), Box<dyn Error>> {
     //On init create a tmp directory for holding files.
@@ -48,7 +48,8 @@ pub async fn run() -> Result<(), Box<dyn Error>> {
     loop {
         match get_split_task().await {
             Ok(Some(val)) => {
-                if let Err(e) = process(val, &base_dir, s3_service_tx.clone()).await {
+                if let Err(e) = process(val.clone(), &base_dir, s3_service_tx.clone()).await {
+                    fail_job(&db.clone(), val).await;
                     eprintln!("Error while splitting {}", e);
                 }
                 continue;
@@ -89,6 +90,9 @@ async fn get_split_task() -> Result<Option<Task>, SplitServiceError> {
 async fn download_file(base_dir: &str, file_url: &str, job_id: &str) -> Result<Option<String>, SplitServiceError> {
     let file_path = format!("{}/{}_basefile", base_dir, job_id);
     let mut res = reqwest::get(file_url).await.map_err(|e| SplitServiceError::FetchFailed(e.to_string()))?;
+    if !res.status().is_success() {
+        return Err(SplitServiceError::Failed);
+    }
     let mut dest = File::create(&file_path).await.map_err(|e| SplitServiceError::IOError(e.to_string()))?;
     loop {
         match res.chunk().await {
@@ -165,3 +169,20 @@ async fn process(task: Task, base_dir: &str, s3_service_tx: Sender<S3UploadServi
     Ok(())
 }
 
+async fn fail_job(db: &Pool<Postgres>, task: Task) {
+    let task = Task {
+        job_id: task.job_id.clone(),
+        task_type: "split".to_string(),
+        file_url: task.file_url.clone(),
+        retry_left: task.retry_left - 1,
+        page_number: None
+    };
+    let client  = reqwest::Client::new();
+    let url = "http://127.0.0.1:8080/push";
+    match client.post(url).json(&task).send().await {
+        Ok(_) => (),
+        Err(_) => {
+            let _ = job_enqueue_fail(db, &task.job_id).await.map_err(|e| SplitServiceError::Failed);
+        }
+    }
+}
