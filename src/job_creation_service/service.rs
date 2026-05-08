@@ -5,7 +5,7 @@ use sqlx::{Pool, Postgres};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use uuid::Uuid;
 
-use crate::{job_creation_service::db_utils::{insert_row, job_enqueue_fail, ocr_job_enqueue_fail, JobCreationError, RowData}, split_service::value::Task};
+use crate::{job_creation_service::db_utils::{insert_row, job_enqueue_fail, ocr_job_enqueue_fail, JobCreationError, RowData}, retry_worker::db_utils::update_status_of_jobs, split_service::value::Task};
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub enum Status {
@@ -109,15 +109,22 @@ impl JobCreationService {
 
         let client  = Client::new();
         let url = "http://127.0.0.1:8080/push";
+        let mut success = vec![];
         for p in tasks {
             match client.post(url).json(&p).send().await {
                 Ok(_) => {
                     dbg!("SENT");
+                    let uuid = Uuid::from_str(&p.job_id)
+                        .map_err(|e| JobCreationError::DBError(e.to_string())).unwrap();
+                    success.push(uuid);
                 },
                 Err(_) => {
                     let _ = ocr_job_enqueue_fail(&self.db, &p.job_id).await.map_err(|e| JobCreationError::DBError(e.to_string()));
                 }
             }
+        }
+        if let Err(e) = update_status_of_jobs(&self.db, success, "ocr_enqueue_success".to_string()).await {
+            eprintln!("error while updating status of jobs {}", e);
         }
     }
 
