@@ -21,7 +21,8 @@ pub struct RowData {
 pub struct RowDataResult {
     pub id: Uuid,
     pub file_url: String,
-    pub page_number: i32
+    pub page_number: i32,
+    pub root_job_id: Uuid
 }
 
 impl Display for JobCreationError {
@@ -86,7 +87,7 @@ pub async fn insert_row(
         .push_bind(row.enqueue_left.unwrap_or(5))
         .push_bind(row.page_number);
     });
-    query_builder.push(" RETURNING id, file_url, page_number");
+    query_builder.push(" RETURNING id, file_url, page_number, job_id as root_job_id");
 
     let query = query_builder.build_query_as::<RowDataResult>();
 

@@ -7,7 +7,8 @@ use crate::job_creation_service::db_utils::{JobCreationError, RowData};
 pub struct RetryWorkerRowResult {
     pub id: Uuid,
     pub file_url: String,
-    pub page_number: i32
+    pub page_number: i32,
+    pub job_id: Uuid
 }
 
 pub async fn get_jobs_by_status(db_conn: &Pool<Postgres>, status: String) -> Result<Vec<RetryWorkerRowResult>, JobCreationError>  {

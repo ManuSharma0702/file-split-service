@@ -66,7 +66,8 @@ impl JobCreationService {
                 task_type: "split".to_string(),
                 file_url: v[0].file_url.clone(),
                 retry_left: v[0].retry_count - 1,
-                page_number: None
+                page_number: None,
+                root_job_id: None
             };
             let client  = Client::new();
             let url = "http://127.0.0.1:8080/push";
@@ -103,7 +104,7 @@ impl JobCreationService {
         let mut tasks: Vec<Task> = vec![];
         row_result.into_iter().for_each(
             |r| tasks.push(
-                Task { task_type: "ocr".to_string(), job_id: r.id.to_string(), file_url: r.file_url, retry_left: 5, page_number: Some(r.page_number) }
+                Task { task_type: "ocr".to_string(), job_id: r.id.to_string(), file_url: r.file_url, retry_left: 5, page_number: Some(r.page_number), root_job_id: Some(r.root_job_id.to_string()) }
             )
         );
 

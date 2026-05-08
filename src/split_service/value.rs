@@ -38,5 +38,6 @@ pub struct Task {
     pub job_id:  String,
     pub file_url: String,
     pub retry_left: u32,
-    pub page_number: Option<i32>
+    pub page_number: Option<i32>,
+    pub root_job_id: Option<String>
 }

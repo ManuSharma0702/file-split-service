@@ -175,7 +175,8 @@ async fn fail_job(db: &Pool<Postgres>, task: Task) {
         task_type: "split".to_string(),
         file_url: task.file_url.clone(),
         retry_left: task.retry_left - 1,
-        page_number: None
+        page_number: None,
+        root_job_id: None
     };
     let client  = reqwest::Client::new();
     let url = "http://127.0.0.1:8080/push";
