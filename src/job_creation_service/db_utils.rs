@@ -122,3 +122,26 @@ pub async fn ocr_job_enqueue_fail(db_conn: &Pool<Postgres>, job_id: &str) -> Res
 
     Ok(())
 }
+
+pub async fn populate_total_pages_in_jobs_table(db_conn: &Pool<Postgres>, job_id: &str, total_pages: i32) -> Result<(), JobCreationError> {
+    let uuid = Uuid::from_str(job_id)
+        .map_err(|e| JobCreationError::DBError(e.to_string()))?;
+    
+    sqlx::query(
+        r#"
+        UPDATE jobs
+        SET
+            total_pages = $1
+        WHERE id = $2
+        "#
+    )
+    .bind(total_pages)
+    .bind(uuid)
+    .execute(db_conn)
+    .await
+    .map_err(|e| JobCreationError::DBError(e.to_string()))?;
+
+    Ok(())
+}
+
+

@@ -126,6 +126,7 @@ async fn process(task: Task, base_dir: &str, s3_service_tx: Sender<S3UploadServi
         return SplitServiceError::FileNotFound;
     })?;
     let pages = doc.get_pages();
+
     for (i, _) in pages.iter().enumerate() {
         let page_number = (i + 1) as u32;
         

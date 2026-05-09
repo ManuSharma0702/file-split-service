@@ -5,7 +5,7 @@ use sqlx::{Pool, Postgres};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use uuid::Uuid;
 
-use crate::{job_creation_service::db_utils::{insert_row, job_enqueue_fail, ocr_job_enqueue_fail, JobCreationError, RowData}, retry_worker::db_utils::update_status_of_jobs, split_service::value::Task};
+use crate::{job_creation_service::db_utils::{insert_row, job_enqueue_fail, ocr_job_enqueue_fail, populate_total_pages_in_jobs_table, JobCreationError, RowData}, retry_worker::db_utils::update_status_of_jobs, split_service::value::Task};
 
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub enum Status {
@@ -80,9 +80,22 @@ impl JobCreationService {
             return;
         }
 
-        //If all success, then create entry in DB for all success as status ocr_enqueue_pending. then create task for each and push to job queue, if any failure then update status to ocr_enqueue_failed and make a retry worker retry these.
+        //Populate total pages of file in db in jobs table.
         let v = job_status.by_status.entry(Status::Success).or_default();
+
         let job_id = &v[0].job_id.clone();
+        let total_files = v[0].total_files.clone();
+
+        match populate_total_pages_in_jobs_table(&self.db, &job_id.clone(), total_files as i32).await {
+            Ok(_) => (),
+            Err(e) =>  {
+                eprintln!("Error while inserting into DB: {}",e);
+                let _ = job_enqueue_fail(&self.db, job_id).await.map_err(|e| JobCreationError::DBError(e.to_string()));
+                return;
+            }
+        }
+
+        //If all success, then create entry in DB for all success as status ocr_enqueue_pending. then create task for each and push to job queue, if any failure then update status to ocr_enqueue_failed and make a retry worker retry these.
         let mut rows: Vec<RowData> = vec![];
         for j in v {
             let uuid = Uuid::from_str(&j.job_id)
